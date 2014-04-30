@@ -67,7 +67,7 @@
 #import "GCDWebServerDataResponse.h"
 #import "GCDWebServerErrorResponse.h"
 #import "GCDWebServerFileResponse.h"
-#import "GCDWebServerStreamingResponse.h"
+#import "GCDWebServerStreamedResponse.h"
 
 #ifdef __GCDWEBSERVER_LOGGING_HEADER__
 
@@ -111,7 +111,11 @@ extern void GCDLogMessage(GCDWebServerLogLevel level, NSString* format, ...) NS_
 #define kGCDWebServerErrorDomain @"GCDWebServerErrorDomain"
 
 static inline BOOL GCDWebServerIsValidByteRange(NSRange range) {
-  return ((range.location != NSNotFound) || (range.length > 0));
+  return ((range.location != NSUIntegerMax) || (range.length > 0));
+}
+
+static inline NSError* GCDWebServerMakePosixError(int code) {
+  return [NSError errorWithDomain:NSPOSIXErrorDomain code:code userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithUTF8String:strerror(code)]}];
 }
 
 extern void GCDWebServerInitializeFunctions();

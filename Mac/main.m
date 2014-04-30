@@ -31,9 +31,10 @@
 
 #import "GCDWebServerDataRequest.h"
 #import "GCDWebServerURLEncodedFormRequest.h"
+#import "GCDWebServerMultiPartFormRequest.h"
 
 #import "GCDWebServerDataResponse.h"
-#import "GCDWebServerStreamingResponse.h"
+#import "GCDWebServerStreamedResponse.h"
 
 #import "GCDWebDAVServer.h"
 
@@ -47,9 +48,10 @@ typedef enum {
   kMode_WebServer = 0,
   kMode_HTMLPage,
   kMode_HTMLForm,
+  kMode_HTMLFileUpload,
   kMode_WebDAV,
   kMode_WebUploader,
-  kMode_StreamingResponse
+  kMode_StreamingResponse,
 } Mode;
 
 @interface Delegate : NSObject <GCDWebServerDelegate, GCDWebDAVServerDelegate, GCDWebUploaderDelegate>
@@ -62,6 +64,10 @@ typedef enum {
 }
 
 - (void)webServerDidStart:(GCDWebServer*)server {
+  [self _logDelegateCall:_cmd];
+}
+
+- (void)webServerDidCompleteBonjourRegistration:(GCDWebServer*)server {
   [self _logDelegateCall:_cmd];
 }
 
@@ -136,7 +142,7 @@ int main(int argc, const char* argv[]) {
     NSString* authenticationPassword = nil;
     
     if (argc == 1) {
-      fprintf(stdout, "Usage: %s [-mode webServer | htmlPage | htmlForm | webDAV | webUploader | streamingResponse] [-record] [-root directory] [-tests directory] [-authenticationMethod Basic | Digest] [-authenticationRealm realm] [-authenticationUser user] [-authenticationPassword password]\n\n", basename((char*)argv[0]));
+      fprintf(stdout, "Usage: %s [-mode webServer | htmlPage | htmlForm | htmlFileUpload | webDAV | webUploader | streamingResponse] [-record] [-root directory] [-tests directory] [-authenticationMethod Basic | Digest] [-authenticationRealm realm] [-authenticationUser user] [-authenticationPassword password]\n\n", basename((char*)argv[0]));
     } else {
       for (int i = 1; i < argc; ++i) {
         if (argv[i][0] != '-') {
@@ -150,6 +156,8 @@ int main(int argc, const char* argv[]) {
             mode = kMode_HTMLPage;
           } else if (!strcmp(argv[i], "htmlForm")) {
             mode = kMode_HTMLForm;
+          } else if (!strcmp(argv[i], "htmlFileUpload")) {
+            mode = kMode_HTMLFileUpload;
           } else if (!strcmp(argv[i], "webDAV")) {
             mode = kMode_WebDAV;
           } else if (!strcmp(argv[i], "webUploader")) {
@@ -239,6 +247,48 @@ int main(int argc, const char* argv[]) {
         break;
       }
       
+      // Implements HTML file upload
+      case kMode_HTMLFileUpload: {
+        fprintf(stdout, "Running in HTML File Upload mode");
+        webServer = [[GCDWebServer alloc] init];
+        NSString* formHTML = @" \
+          <form name=\"input\" action=\"/\" method=\"post\" enctype=\"multipart/form-data\"> \
+          <input type=\"hidden\" name=\"secret\" value=\"42\"> \
+          <input type=\"file\" name=\"files\" multiple><br/> \
+          <input type=\"submit\" value=\"Submit\"> \
+          </form> \
+        ";
+        [webServer addHandlerForMethod:@"GET"
+                                  path:@"/"
+                          requestClass:[GCDWebServerRequest class]
+                          processBlock:^GCDWebServerResponse *(GCDWebServerRequest* request) {
+          
+          NSString* html = [NSString stringWithFormat:@"<html><body>%@</body></html>", formHTML];
+          return [GCDWebServerDataResponse responseWithHTML:html];
+          
+        }];
+        [webServer addHandlerForMethod:@"POST"
+                                  path:@"/"
+                          requestClass:[GCDWebServerMultiPartFormRequest class]
+                          processBlock:^GCDWebServerResponse *(GCDWebServerRequest* request) {
+          
+          NSMutableString* string = [NSMutableString string];
+          for (GCDWebServerMultiPartArgument* argument in [(GCDWebServerMultiPartFormRequest*)request arguments]) {
+            [string appendFormat:@"%@ = %@<br>", argument.controlName, argument.string];
+          }
+          for (GCDWebServerMultiPartFile* file in [(GCDWebServerMultiPartFormRequest*)request files]) {
+            NSDictionary* attributes = [[NSFileManager defaultManager] attributesOfItemAtPath:file.temporaryPath error:NULL];
+            [string appendFormat:@"%@ = &quot;%@&quot; (%@ | %llu %@)<br>", file.controlName, file.fileName, file.mimeType,
+                                 attributes.fileSize >= 1000 ? attributes.fileSize / 1000 : attributes.fileSize,
+                                 attributes.fileSize >= 1000 ? @"KB" : @"Bytes"];
+          };
+          NSString* html = [NSString stringWithFormat:@"<html><body><p>%@</p><hr>%@</body></html>", string, formHTML];
+          return [GCDWebServerDataResponse responseWithHTML:html];
+          
+        }];
+        break;
+      }
+      
       // Serve home directory through WebDAV
       case kMode_WebDAV: {
         fprintf(stdout, "Running in WebDAV mode from \"%s\"", [rootDirectory UTF8String]);
@@ -263,7 +313,7 @@ int main(int argc, const char* argv[]) {
                           processBlock:^GCDWebServerResponse *(GCDWebServerRequest* request) {
           
           __block int countDown = 10;
-          return [GCDWebServerStreamingResponse responseWithContentType:@"text/plain" streamBlock:^NSData *(NSError** error) {
+          return [GCDWebServerStreamedResponse responseWithContentType:@"text/plain" streamBlock:^NSData *(NSError** error) {
             
             usleep(100 * 1000);
             if (countDown) {
@@ -287,11 +337,14 @@ int main(int argc, const char* argv[]) {
     
     if (webServer) {
       Delegate* delegate = [[Delegate alloc] init];
-      webServer.delegate = delegate;
       if (testDirectory) {
+#ifndef NDEBUG
+        webServer.delegate = delegate;
+#endif
         fprintf(stdout, "<RUNNING TESTS FROM \"%s\">\n\n", [testDirectory UTF8String]);
         result = (int)[webServer runTestsWithOptions:@{GCDWebServerOption_Port: @8080} inDirectory:testDirectory];
       } else {
+        webServer.delegate = delegate;
         if (recording) {
           fprintf(stdout, "<RECORDING ENABLED>\n");
           webServer.recordingEnabled = YES;
@@ -309,13 +362,14 @@ int main(int argc, const char* argv[]) {
             [options setObject:GCDWebServerAuthenticationMethod_DigestAccess forKey:GCDWebServerOption_AuthenticationMethod];
           }
         }
-        if ([webServer runWithOptions:options]) {
+        if ([webServer runWithOptions:options error:NULL]) {
           result = 0;
         }
       }
+      webServer.delegate = nil;
 #if !__has_feature(objc_arc)
-      [webServer release];
       [delegate release];
+      [webServer release];
 #endif
     }
   }
