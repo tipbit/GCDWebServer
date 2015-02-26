@@ -298,7 +298,7 @@ static void _DisconnectTimerCallBack(CFRunLoopTimerRef timer, void* info) {
     _backgroundTask = UIBackgroundTaskInvalid;
     LOG_DEBUG(@"Did end background task");
   } else {
-    DNOT_REACHED();
+      //    DNOT_REACHED();
   }
 }
 
