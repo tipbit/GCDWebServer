@@ -25,6 +25,10 @@
  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#if !__has_feature(objc_arc)
+#error GCDWebUploader requires ARC
+#endif
+
 #import <TargetConditionals.h>
 #if TARGET_OS_IPHONE
 #import <UIKit/UIKit.h>
@@ -57,6 +61,11 @@
 
 @implementation GCDWebUploader (Methods)
 
+// Must match implementation in GCDWebDAVServer
+- (BOOL)_checkSandboxedPath:(NSString*)path {
+  return [[path stringByStandardizingPath] hasPrefix:_uploadDirectory];
+}
+
 - (BOOL)_checkFileExtension:(NSString*)fileName {
   if (_allowedExtensions && ![_allowedExtensions containsObject:[[fileName pathExtension] lowercaseString]]) {
     return NO;
@@ -85,8 +94,8 @@
 - (GCDWebServerResponse*)listDirectory:(GCDWebServerRequest*)request {
   NSString* relativePath = [[request query] objectForKey:@"path"];
   NSString* absolutePath = [_uploadDirectory stringByAppendingPathComponent:relativePath];
-  BOOL isDirectory;
-  if (![[NSFileManager defaultManager] fileExistsAtPath:absolutePath isDirectory:&isDirectory]) {
+  BOOL isDirectory = NO;
+  if (![self _checkSandboxedPath:absolutePath] || ![[NSFileManager defaultManager] fileExistsAtPath:absolutePath isDirectory:&isDirectory]) {
     return [GCDWebServerErrorResponse responseWithClientError:kGCDWebServerHTTPStatusCode_NotFound message:@"\"%@\" does not exist", relativePath];
   }
   if (!isDirectory) {
@@ -129,8 +138,8 @@
 - (GCDWebServerResponse*)downloadFile:(GCDWebServerRequest*)request {
   NSString* relativePath = [[request query] objectForKey:@"path"];
   NSString* absolutePath = [_uploadDirectory stringByAppendingPathComponent:relativePath];
-  BOOL isDirectory;
-  if (![[NSFileManager defaultManager] fileExistsAtPath:absolutePath isDirectory:&isDirectory]) {
+  BOOL isDirectory = NO;
+  if (![self _checkSandboxedPath:absolutePath] || ![[NSFileManager defaultManager] fileExistsAtPath:absolutePath isDirectory:&isDirectory]) {
     return [GCDWebServerErrorResponse responseWithClientError:kGCDWebServerHTTPStatusCode_NotFound message:@"\"%@\" does not exist", relativePath];
   }
   if (isDirectory) {
@@ -160,6 +169,9 @@
   }
   NSString* relativePath = [[request firstArgumentForControlName:@"path"] string];
   NSString* absolutePath = [self _uniquePathForPath:[[_uploadDirectory stringByAppendingPathComponent:relativePath] stringByAppendingPathComponent:file.fileName]];
+  if (![self _checkSandboxedPath:absolutePath]) {
+    return [GCDWebServerErrorResponse responseWithClientError:kGCDWebServerHTTPStatusCode_NotFound message:@"\"%@\" does not exist", relativePath];
+  }
   
   if (![self shouldUploadFileAtPath:absolutePath withTemporaryFile:file.temporaryPath]) {
     return [GCDWebServerErrorResponse responseWithClientError:kGCDWebServerHTTPStatusCode_Forbidden message:@"Uploading file \"%@\" to \"%@\" is not permitted", file.fileName, relativePath];
@@ -181,13 +193,16 @@
 - (GCDWebServerResponse*)moveItem:(GCDWebServerURLEncodedFormRequest*)request {
   NSString* oldRelativePath = [request.arguments objectForKey:@"oldPath"];
   NSString* oldAbsolutePath = [_uploadDirectory stringByAppendingPathComponent:oldRelativePath];
-  BOOL isDirectory;
-  if (![[NSFileManager defaultManager] fileExistsAtPath:oldAbsolutePath isDirectory:&isDirectory]) {
+  BOOL isDirectory = NO;
+  if (![self _checkSandboxedPath:oldAbsolutePath] || ![[NSFileManager defaultManager] fileExistsAtPath:oldAbsolutePath isDirectory:&isDirectory]) {
     return [GCDWebServerErrorResponse responseWithClientError:kGCDWebServerHTTPStatusCode_NotFound message:@"\"%@\" does not exist", oldRelativePath];
   }
   
   NSString* newRelativePath = [request.arguments objectForKey:@"newPath"];
   NSString* newAbsolutePath = [self _uniquePathForPath:[_uploadDirectory stringByAppendingPathComponent:newRelativePath]];
+  if (![self _checkSandboxedPath:newAbsolutePath]) {
+    return [GCDWebServerErrorResponse responseWithClientError:kGCDWebServerHTTPStatusCode_NotFound message:@"\"%@\" does not exist", newRelativePath];
+  }
   
   NSString* itemName = [newAbsolutePath lastPathComponent];
   if ((!_allowHidden && [itemName hasPrefix:@"."]) || (!isDirectory && ![self _checkFileExtension:itemName])) {
@@ -215,7 +230,7 @@
   NSString* relativePath = [request.arguments objectForKey:@"path"];
   NSString* absolutePath = [_uploadDirectory stringByAppendingPathComponent:relativePath];
   BOOL isDirectory = NO;
-  if (![[NSFileManager defaultManager] fileExistsAtPath:absolutePath isDirectory:&isDirectory]) {
+  if (![self _checkSandboxedPath:absolutePath] || ![[NSFileManager defaultManager] fileExistsAtPath:absolutePath isDirectory:&isDirectory]) {
     return [GCDWebServerErrorResponse responseWithClientError:kGCDWebServerHTTPStatusCode_NotFound message:@"\"%@\" does not exist", relativePath];
   }
   
@@ -244,6 +259,9 @@
 - (GCDWebServerResponse*)createDirectory:(GCDWebServerURLEncodedFormRequest*)request {
   NSString* relativePath = [request.arguments objectForKey:@"path"];
   NSString* absolutePath = [self _uniquePathForPath:[_uploadDirectory stringByAppendingPathComponent:relativePath]];
+  if (![self _checkSandboxedPath:absolutePath]) {
+    return [GCDWebServerErrorResponse responseWithClientError:kGCDWebServerHTTPStatusCode_NotFound message:@"\"%@\" does not exist", relativePath];
+  }
   
   NSString* directoryName = [absolutePath lastPathComponent];
   if (!_allowHidden && [directoryName hasPrefix:@"."]) {
@@ -274,21 +292,16 @@
 @synthesize uploadDirectory=_uploadDirectory, allowedFileExtensions=_allowedExtensions, allowHiddenItems=_allowHidden,
             title=_title, header=_header, prologue=_prologue, epilogue=_epilogue, footer=_footer;
 
+@dynamic delegate;
+
 - (instancetype)initWithUploadDirectory:(NSString*)path {
   if ((self = [super init])) {
     NSBundle* siteBundle = [NSBundle bundleWithPath:[[NSBundle mainBundle] pathForResource:@"GCDWebUploader" ofType:@"bundle"]];
     if (siteBundle == nil) {
-#if !__has_feature(objc_arc)
-      [self release];
-#endif
       return nil;
     }
     _uploadDirectory = [[path stringByStandardizingPath] copy];
-#if __has_feature(objc_arc)
     GCDWebUploader* __unsafe_unretained server = self;
-#else
-    __block GCDWebUploader* server = self;
-#endif
     
     // Resource files
     [self addGETHandlerForBasePath:@"/" directoryPath:[siteBundle resourcePath] indexFilename:nil cacheAge:3600 allowRangeRequests:NO];
@@ -299,15 +312,14 @@
 #if TARGET_OS_IPHONE
       NSString* device = [[UIDevice currentDevice] name];
 #else
-#if __has_feature(objc_arc)
       NSString* device = CFBridgingRelease(SCDynamicStoreCopyComputerName(NULL, NULL));
-#else
-      NSString* device = [(id)SCDynamicStoreCopyComputerName(NULL, NULL) autorelease];
-#endif
 #endif
       NSString* title = server.title;
       if (title == nil) {
         title = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleDisplayName"];
+        if (title == nil) {
+          title = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleName"];
+        }
 #if !TARGET_OS_IPHONE
         if (title == nil) {
           title = [[NSProcessInfo processInfo] processName];
@@ -383,22 +395,6 @@
   }
   return self;
 }
-
-#if !__has_feature(objc_arc)
-
-- (void)dealloc {
-  [_uploadDirectory release];
-  [_allowedExtensions release];
-  [_title release];
-  [_header release];
-  [_prologue release];
-  [_epilogue release];
-  [_footer release];
-  
-  [super dealloc];
-}
-
-#endif
 
 @end
 

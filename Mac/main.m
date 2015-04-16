@@ -52,6 +52,7 @@ typedef enum {
   kMode_WebDAV,
   kMode_WebUploader,
   kMode_StreamingResponse,
+  kMode_AsyncResponse
 } Mode;
 
 @interface Delegate : NSObject <GCDWebServerDelegate, GCDWebDAVServerDelegate, GCDWebUploaderDelegate>
@@ -140,9 +141,10 @@ int main(int argc, const char* argv[]) {
     NSString* authenticationRealm = nil;
     NSString* authenticationUser = nil;
     NSString* authenticationPassword = nil;
+    BOOL bindToLocalhost = NO;
     
     if (argc == 1) {
-      fprintf(stdout, "Usage: %s [-mode webServer | htmlPage | htmlForm | htmlFileUpload | webDAV | webUploader | streamingResponse] [-record] [-root directory] [-tests directory] [-authenticationMethod Basic | Digest] [-authenticationRealm realm] [-authenticationUser user] [-authenticationPassword password]\n\n", basename((char*)argv[0]));
+      fprintf(stdout, "Usage: %s [-mode webServer | htmlPage | htmlForm | htmlFileUpload | webDAV | webUploader | streamingResponse | asyncResponse] [-record] [-root directory] [-tests directory] [-authenticationMethod Basic | Digest] [-authenticationRealm realm] [-authenticationUser user] [-authenticationPassword password] [--localhost]\n\n", basename((char*)argv[0]));
     } else {
       for (int i = 1; i < argc; ++i) {
         if (argv[i][0] != '-') {
@@ -164,6 +166,8 @@ int main(int argc, const char* argv[]) {
             mode = kMode_WebUploader;
           } else if (!strcmp(argv[i], "streamingResponse")) {
             mode = kMode_StreamingResponse;
+          } else if (!strcmp(argv[i], "asyncResponse")) {
+            mode = kMode_AsyncResponse;
           }
         } else if (!strcmp(argv[i], "-record")) {
           recording = YES;
@@ -185,6 +189,8 @@ int main(int argc, const char* argv[]) {
         } else if (!strcmp(argv[i], "-authenticationPassword") && (i + 1 < argc)) {
           ++i;
           authenticationPassword = [NSString stringWithUTF8String:argv[i]];
+        } else if (!strcmp(argv[i], "--localhost")) {
+          bindToLocalhost = YES;
         }
       }
     }
@@ -308,7 +314,7 @@ int main(int argc, const char* argv[]) {
         fprintf(stdout, "Running in Streaming Response mode");
         webServer = [[GCDWebServer alloc] init];
         [webServer addHandlerForMethod:@"GET"
-                                  path:@"/"
+                                  path:@"/sync"
                           requestClass:[GCDWebServerRequest class]
                           processBlock:^GCDWebServerResponse *(GCDWebServerRequest* request) {
           
@@ -325,20 +331,74 @@ int main(int argc, const char* argv[]) {
           }];
           
         }];
+        [webServer addHandlerForMethod:@"GET"
+                                  path:@"/async"
+                          requestClass:[GCDWebServerRequest class]
+                          processBlock:^GCDWebServerResponse *(GCDWebServerRequest* request) {
+          
+          __block int countDown = 10;
+          return [GCDWebServerStreamedResponse responseWithContentType:@"text/plain" asyncStreamBlock:^(GCDWebServerBodyReaderCompletionBlock completionBlock) {
+            
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+              
+              NSData* data = countDown ? [[NSString stringWithFormat:@"%i\n", countDown--] dataUsingEncoding:NSUTF8StringEncoding] : [NSData data];
+              completionBlock(data, nil);
+              
+            });
+            
+          }];
+          
+        }];
+        break;
+      }
+      
+      // Test async responses
+      case kMode_AsyncResponse: {
+        fprintf(stdout, "Running in Async Response mode");
+        webServer = [[GCDWebServer alloc] init];
+        [webServer addHandlerForMethod:@"GET"
+                                  path:@"/async"
+                          requestClass:[GCDWebServerRequest class]
+                     asyncProcessBlock:^(GCDWebServerRequest* request, GCDWebServerCompletionBlock completionBlock) {
+          
+          dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)), dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+            GCDWebServerDataResponse* response = [GCDWebServerDataResponse responseWithData:[@"Hello World!" dataUsingEncoding:NSUTF8StringEncoding] contentType:@"text/plain"];
+            completionBlock(response);
+          });
+          
+        }];
+        [webServer addHandlerForMethod:@"GET"
+                                  path:@"/async2"
+                          requestClass:[GCDWebServerRequest class]
+                     asyncProcessBlock:^(GCDWebServerRequest* request, GCDWebServerCompletionBlock handlerCompletionBlock) {
+          
+          dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)), dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+            
+            __block int countDown = 10;
+            GCDWebServerStreamedResponse* response = [GCDWebServerStreamedResponse responseWithContentType:@"text/plain" asyncStreamBlock:^(GCDWebServerBodyReaderCompletionBlock readerCompletionBlock) {
+              
+              dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                
+                NSData* data = countDown ? [[NSString stringWithFormat:@"%i\n", countDown--] dataUsingEncoding:NSUTF8StringEncoding] : [NSData data];
+                readerCompletionBlock(data, nil);
+                
+              });
+              
+            }];
+            handlerCompletionBlock(response);
+            
+          });
+          
+        }];
         break;
       }
       
     }
-#if __has_feature(objc_arc)
-    fprintf(stdout, " (ARC is ON)\n");
-#else
-    fprintf(stdout, " (ARC is OFF)\n");
-#endif
     
     if (webServer) {
       Delegate* delegate = [[Delegate alloc] init];
       if (testDirectory) {
-#ifndef NDEBUG
+#if DEBUG
         webServer.delegate = delegate;
 #endif
         fprintf(stdout, "<RUNNING TESTS FROM \"%s\">\n\n", [testDirectory UTF8String]);
@@ -352,6 +412,7 @@ int main(int argc, const char* argv[]) {
         fprintf(stdout, "\n");
         NSMutableDictionary* options = [NSMutableDictionary dictionary];
         [options setObject:@8080 forKey:GCDWebServerOption_Port];
+        [options setObject:@(bindToLocalhost) forKey:GCDWebServerOption_BindToLocalhost];
         [options setObject:@"" forKey:GCDWebServerOption_BonjourName];
         if (authenticationUser && authenticationPassword) {
           [options setValue:authenticationRealm forKey:GCDWebServerOption_AuthenticationRealm];
@@ -367,10 +428,6 @@ int main(int argc, const char* argv[]) {
         }
       }
       webServer.delegate = nil;
-#if !__has_feature(objc_arc)
-      [delegate release];
-      [webServer release];
-#endif
     }
   }
   return result;
