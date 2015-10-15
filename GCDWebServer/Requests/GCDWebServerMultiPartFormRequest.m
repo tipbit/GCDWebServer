@@ -296,7 +296,7 @@ static NSData* _dashNewlineData = nil;
             }
             _tmpPath = nil;
           } else {
-            NSData* data = [[NSData alloc] initWithBytes:(void*)dataBytes length:dataLength];
+            NSData* data = [[NSData alloc] initWithBytes:(const void*)dataBytes length:dataLength];
             GCDWebServerMultiPartArgument* argument = [[GCDWebServerMultiPartArgument alloc] initWithControlName:_controlName contentType:_contentType data:data];
             [_arguments addObject:argument];
           }

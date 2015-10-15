@@ -122,7 +122,10 @@
       if (data == nil) {
         return nil;
       }
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wcast-qual"
       _stream.next_in = (Bytef*)data.bytes;
+#pragma clang diagnostic pop
       _stream.avail_in = (uInt)data.length;
       while (1) {
         NSUInteger maxLength = encodedData.length - length;

@@ -99,7 +99,7 @@ static int32_t _connectionCounter = 0;
             [data appendBytes:chunkBytes length:chunkSize];
             return true;
           });
-          [self didReadBytes:((char*)data.bytes + originalLength) length:(data.length - originalLength)];
+          [self didReadBytes:((const char*)data.bytes + originalLength) length:(data.length - originalLength)];
           block(YES);
         } else {
           if (_bytesRead > 0) {
@@ -196,13 +196,13 @@ static inline NSUInteger _ScanHexNumber(const void* bytes, NSUInteger size) {
       break;
     }
     NSRange extensionRange = [chunkData rangeOfData:[NSData dataWithBytes:";" length:1] options:0 range:NSMakeRange(0, range.location)];  // Ignore chunk extensions
-    NSUInteger length = _ScanHexNumber((char*)chunkData.bytes, extensionRange.location != NSNotFound ? extensionRange.location : range.location);
+    NSUInteger length = _ScanHexNumber((const char*)chunkData.bytes, extensionRange.location != NSNotFound ? extensionRange.location : range.location);
     if (length != NSNotFound) {
       if (length) {
         if (chunkData.length < range.location + range.length + length + 2) {
           break;
         }
-        const char* ptr = (char*)chunkData.bytes + range.location + range.length + length;
+        const char* ptr = (const char*)chunkData.bytes + range.location + range.length + length;
         if ((*ptr == '\r') && (*(ptr + 1) == '\n')) {
           NSError* error = nil;
           if ([_request performWriteData:[chunkData subdataWithRange:NSMakeRange(range.location + range.length, length)] error:&error]) {

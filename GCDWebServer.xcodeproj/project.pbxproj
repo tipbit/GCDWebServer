@@ -733,6 +733,7 @@
 					"-Wno-documentation-unknown-command",
 					"-Wno-objc-missing-property-synthesis",
 					"-Wno-cstring-format-directive",
+					"-Wno-reserved-id-macro",
 				);
 			};
 			name = Debug;

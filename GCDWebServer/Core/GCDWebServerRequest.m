@@ -102,7 +102,10 @@ NSString* const GCDWebServerRequestAttribute_RegexCaptures = @"GCDWebServerReque
 
 - (BOOL)writeData:(NSData*)data error:(NSError**)error {
   GWS_DCHECK(!_finished);
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wcast-qual"
   _stream.next_in = (Bytef*)data.bytes;
+#pragma clang diagnostic pop
   _stream.avail_in = (uInt)data.length;
   NSMutableData* decodedData = [[NSMutableData alloc] initWithLength:kGZipInitialBufferSize];
   if (decodedData == nil) {
