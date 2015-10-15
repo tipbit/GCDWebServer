@@ -249,7 +249,8 @@ NSString* GCDWebServerGetPrimaryIPAddress(BOOL useIPv6) {
   if (store) {
     CFPropertyListRef info = SCDynamicStoreCopyValue(store, CFSTR("State:/Network/Global/IPv4"));  // There is no equivalent for IPv6 but the primary interface should be the same
     if (info) {
-      primaryInterface = [[NSString stringWithString:[(__bridge NSDictionary*)info objectForKey:@"PrimaryInterface"]] UTF8String];
+      NSString* prim = [(__bridge NSDictionary*)info objectForKey:@"PrimaryInterface"];
+      primaryInterface = (prim == nil ? NULL : [[prim copy] UTF8String]);
       CFRelease(info);
     }
     CFRelease(store);

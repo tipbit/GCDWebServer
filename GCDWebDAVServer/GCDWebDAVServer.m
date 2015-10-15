@@ -257,7 +257,8 @@ static inline BOOL _IsMacFinder(GCDWebServerRequest* request) {
   }
   
   NSString* dstRelativePath = [request.headers objectForKey:@"Destination"];
-  NSRange range = [dstRelativePath rangeOfString:[request.headers objectForKey:@"Host"]];
+  NSString* host = [request.headers objectForKey:@"Host"];
+  NSRange range = (host == nil ? NSMakeRange(NSNotFound, 0) : [dstRelativePath rangeOfString:host]);
   if ((dstRelativePath == nil) || (range.location == NSNotFound)) {
     return [GCDWebServerErrorResponse responseWithClientError:kGCDWebServerHTTPStatusCode_BadRequest message:@"Malformed 'Destination' header: %@", dstRelativePath];
   }

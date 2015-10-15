@@ -82,7 +82,8 @@
     int retries = 0;
     do {
       if (extension.length) {
-        path = [directory stringByAppendingPathComponent:[[base stringByAppendingFormat:@" (%i)", ++retries] stringByAppendingPathExtension:extension]];
+        NSString* numberedBase = [[base stringByAppendingFormat:@" (%i)", ++retries] stringByAppendingPathExtension:extension];
+        path = [directory stringByAppendingPathComponent:numberedBase];
       } else {
         path = [directory stringByAppendingPathComponent:[base stringByAppendingFormat:@" (%i)", ++retries]];
       }
